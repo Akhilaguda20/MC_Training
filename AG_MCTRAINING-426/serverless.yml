@@ -1,0 +1,179 @@
+service: ag-mctraining-426
+
+provider:
+  name: aws
+  runtime: python3.11
+  region: ${opt:region, 'us-east-1'}
+  stage: ${opt:stage, 'dev'}
+  timeout: 10
+  memorySize: 256
+  stackName: user-crud-api-serverless
+  environment:
+    TABLE_NAME: ${self:service}-${self:provider.stage}-users
+
+package:
+  individually: true
+  patterns:
+    - "!**/__pycache__/**"
+    - "!**/*.pyc"
+    - "!venv/**"
+    - "!node_modules/**"
+
+functions:
+  createUser:
+    handler: create_user/handler.lambda_handler
+    role: !GetAtt CreateUserExecutionRole.Arn
+    package:
+      patterns:
+        - "create_user/**"
+    events:
+      - http:
+          path: users
+          method: post
+          cors: true
+
+  getUser:
+    handler: get_user/handler.lambda_handler
+    role: !GetAtt GetUserExecutionRole.Arn
+    package:
+      patterns:
+        - "get_user/**"
+    events:
+      - http:
+          path: users/{id}
+          method: get
+          cors: true
+
+  updateUser:
+    handler: update_user/handler.lambda_handler
+    role: !GetAtt UpdateUserExecutionRole.Arn
+    package:
+      patterns:
+        - "update_user/**"
+    events:
+      - http:
+          path: users/{id}
+          method: put
+          cors: true
+
+  deleteUser:
+    handler: delete_user/handler.lambda_handler
+    role: !GetAtt DeleteUserExecutionRole.Arn
+    package:
+      patterns:
+        - "delete_user/**"
+    events:
+      - http:
+          path: users/{id}
+          method: delete
+          cors: true
+
+resources:
+  Resources:
+    CreateUserExecutionRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:service}-${self:provider.stage}-create-user-role
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action:
+                - sts:AssumeRole
+        Policies:
+          - PolicyName: create-user-policy
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - dynamodb:PutItem
+                  Resource:
+                    - !GetAtt UsersTable.Arn
+
+    GetUserExecutionRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:service}-${self:provider.stage}-get-user-role
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action:
+                - sts:AssumeRole
+        Policies:
+          - PolicyName: get-user-policy
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - dynamodb:GetItem
+                  Resource:
+                    - !GetAtt UsersTable.Arn
+
+    UpdateUserExecutionRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:service}-${self:provider.stage}-update-user-role
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action:
+                - sts:AssumeRole
+        Policies:
+          - PolicyName: update-user-policy
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - dynamodb:UpdateItem
+                  Resource:
+                    - !GetAtt UsersTable.Arn
+
+    DeleteUserExecutionRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:service}-${self:provider.stage}-delete-user-role
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action:
+                - sts:AssumeRole
+        Policies:
+          - PolicyName: delete-user-policy
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - dynamodb:DeleteItem
+                  Resource:
+                    - !GetAtt UsersTable.Arn
+
+    UsersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.TABLE_NAME}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
