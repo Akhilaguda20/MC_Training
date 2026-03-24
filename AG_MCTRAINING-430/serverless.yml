@@ -1,0 +1,112 @@
+service: user-events-service
+
+plugins:
+  - serverless-localstack
+
+custom:
+  localstack:
+    stages:
+      - local
+    host: http://localhost
+    edgePort: 4566
+    autostart: true
+
+provider:
+  name: aws
+  runtime: python3.9
+  region: us-east-1
+  stage: ${opt:stage, 'dev'}
+
+  environment:
+    TABLE_NAME: users_events
+    QUEUE_URL:
+      Ref: UserEventsQueue
+    EVENT_BUS_NAME: user-events-bus  
+
+  iam:
+    role:
+      statements:
+        # DynamoDB permission
+        - Effect: Allow
+          Action:
+            - dynamodb:UpdateItem
+          Resource:
+            - !GetAtt UsersTable.Arn
+        # EventBridge permission (restricted to custom bus)
+        - Effect: Allow
+          Action:
+            - events:PutEvents
+          Resource:
+            - !GetAtt UserEventsBus.Arn
+
+package:
+  patterns:
+    - common/**
+    - process_user/**
+    - update_user/**
+
+functions:
+
+  updateUser:
+    handler: update_user/handler.lambda_handler
+    events:
+      - http:
+          path: /user/{id}
+          method: put
+
+  processUserUpdate:
+    handler: process_user/handler.lambda_handler
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - UserEventsQueue
+              - Arn
+          batchSize: 5
+
+resources:
+  Resources:
+
+    #  Custom Event Bus
+    UserEventsBus:
+      Type: AWS::Events::EventBus
+      Properties:
+        Name: user-events-bus
+
+    #  SQS Queue
+    UserEventsQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: UserEventsQueue
+
+    #  EventBridge Rule (uses custom bus)
+    UserUpdatedEventRule:
+      Type: AWS::Events::Rule
+      Properties:
+        Name: UserUpdatedToSQS
+        EventBusName:
+          Ref: UserEventsBus   
+        EventPattern:
+          source:
+            - user.service
+          detail-type:
+            - UserUpdated
+        Targets:
+          - Arn:
+              Fn::GetAtt:
+                - UserEventsQueue
+                - Arn
+            Id: "UserEventsQueueTarget"
+
+    # DynamoDB Table
+    UsersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: users_events
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: userId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
