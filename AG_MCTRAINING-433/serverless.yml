@@ -32,6 +32,8 @@ provider:
       Ref: UserEventsQueue
     EVENT_BUS_NAME: user-events-bus
     PAYROLL_TABLE_NAME: payroll_salary
+    PAYROLL_USER_CREATED_QUEUE_URL:
+      Ref: PayrollUserCreatedQueue
     LOCALSTACK_URL: ${self:custom.localstackUrl.${opt:stage, 'dev'}, ''}
     PYTHONPATH: /var/task/dependencies
 
@@ -55,6 +57,7 @@ provider:
             - sqs:GetQueueAttributes
           Resource:
             - !GetAtt UserEventsQueue.Arn
+            - !GetAtt PayrollUserCreatedQueue.Arn
         - Effect: Allow
           Action:
             - dynamodb:PutItem
@@ -106,6 +109,15 @@ functions:
           path: /user/{id}
           method: put
           cors: true
+  createPayrollOnUserCreated:
+    handler: lambdas.create_payroll_for_user.handler.lambda_handler
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - PayrollUserCreatedQueue
+              - Arn
+          batchSize: 5
   payrollApi:
     handler: payroll.main.handler
     events:
@@ -176,6 +188,46 @@ resources:
               Condition:
                 ArnEquals:
                   aws:SourceArn: !GetAtt UserUpdatedEventRule.Arn
+
+    PayrollUserCreatedQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: PayrollUserCreatedQueue
+
+    UserCreatedEventRule:
+      Type: AWS::Events::Rule
+      Properties:
+        Name: UserCreatedToPayrollSQS
+        EventBusName:
+          Ref: UserEventsBus
+        EventPattern:
+          source:
+            - user.service
+          detail-type:
+            - UserCreated
+        Targets:
+          - Arn:
+              Fn::GetAtt:
+                - PayrollUserCreatedQueue
+                - Arn
+            Id: "PayrollUserCreatedQueueTarget"
+
+    PayrollUserCreatedQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - !Ref PayrollUserCreatedQueue
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: events.amazonaws.com
+              Action: sqs:SendMessage
+              Resource: !GetAtt PayrollUserCreatedQueue.Arn
+              Condition:
+                ArnEquals:
+                  aws:SourceArn: !GetAtt UserCreatedEventRule.Arn
 
     PayrollTable:
       Type: AWS::DynamoDB::Table
