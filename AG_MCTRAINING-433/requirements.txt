@@ -1,0 +1,7 @@
+fastapi==0.135.2
+mangum==0.21.0
+pydantic==2.12.5
+boto3==1.42.74
+python-dotenv==1.2.2
+starlette==1.0.0 # lightweight ASGI framework, required by FastAPI
+prometheus-client
