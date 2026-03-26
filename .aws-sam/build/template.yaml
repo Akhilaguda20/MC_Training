@@ -1,0 +1,138 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: User CRUD API with Granular IAM
+Globals:
+  Function:
+    Runtime: python3.9
+    Timeout: 10
+    MemorySize: 128
+Resources:
+  UsersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName:
+        Fn::Sub: ${AWS::StackName}-users
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+      - AttributeName: userId
+        AttributeType: S
+      KeySchema:
+      - AttributeName: userId
+        KeyType: HASH
+  CreateUserFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName:
+        Fn::Sub: ${AWS::StackName}-create-user
+      Handler: createUser.handler.lambda_handler
+      CodeUri: CreateUserFunction
+      Environment:
+        Variables:
+          TABLE_NAME:
+            Ref: UsersTable
+      Policies:
+      - Statement:
+        - Effect: Allow
+          Action:
+          - dynamodb:PutItem
+          Resource:
+            Fn::GetAtt:
+            - UsersTable
+            - Arn
+      Events:
+        CreateApi:
+          Type: Api
+          Properties:
+            Path: /users
+            Method: post
+    Metadata:
+      SamResourceId: CreateUserFunction
+  GetUserFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName:
+        Fn::Sub: ${AWS::StackName}-get-user
+      Handler: getUser.handler.lambda_handler
+      CodeUri: GetUserFunction
+      Environment:
+        Variables:
+          TABLE_NAME:
+            Ref: UsersTable
+      Policies:
+      - Statement:
+        - Effect: Allow
+          Action:
+          - dynamodb:GetItem
+          Resource:
+            Fn::GetAtt:
+            - UsersTable
+            - Arn
+      Events:
+        GetApi:
+          Type: Api
+          Properties:
+            Path: /users/{id}
+            Method: get
+    Metadata:
+      SamResourceId: GetUserFunction
+  UpdateUserFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName:
+        Fn::Sub: ${AWS::StackName}-update-user
+      Handler: updateUser.handler.lambda_handler
+      CodeUri: UpdateUserFunction
+      Environment:
+        Variables:
+          TABLE_NAME:
+            Ref: UsersTable
+      Policies:
+      - Statement:
+        - Effect: Allow
+          Action:
+          - dynamodb:UpdateItem
+          Resource:
+            Fn::GetAtt:
+            - UsersTable
+            - Arn
+      Events:
+        UpdateApi:
+          Type: Api
+          Properties:
+            Path: /users/{id}
+            Method: put
+    Metadata:
+      SamResourceId: UpdateUserFunction
+  DeleteUserFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName:
+        Fn::Sub: ${AWS::StackName}-delete-user
+      Handler: deleteUser.handler.lambda_handler
+      CodeUri: DeleteUserFunction
+      Environment:
+        Variables:
+          TABLE_NAME:
+            Ref: UsersTable
+      Policies:
+      - Statement:
+        - Effect: Allow
+          Action:
+          - dynamodb:DeleteItem
+          Resource:
+            Fn::GetAtt:
+            - UsersTable
+            - Arn
+      Events:
+        DeleteApi:
+          Type: Api
+          Properties:
+            Path: /users/{id}
+            Method: delete
+    Metadata:
+      SamResourceId: DeleteUserFunction
+Outputs:
+  ApiBaseUrl:
+    Description: API Gateway Base URL
+    Value:
+      Fn::Sub: https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/
