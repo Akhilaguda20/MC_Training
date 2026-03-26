@@ -15,6 +15,9 @@ custom:
     host: http://localhost
     edgePort: 4566
     autostart: true
+  localstackUrl:
+    local: http://host.docker.internal:4566
+    dev: ""
 
 provider:
   name: aws
@@ -28,7 +31,9 @@ provider:
     QUEUE_URL:
       Ref: UserEventsQueue
     EVENT_BUS_NAME: user-events-bus
-    LOCALSTACK_URL: http://host.docker.internal:4566   
+    PAYROLL_TABLE_NAME: payroll_salary
+    LOCALSTACK_URL: ${self:custom.localstackUrl.${opt:stage, 'dev'}, ''}
+    PYTHONPATH: /var/task/dependencies
 
   iam:
     role:
@@ -50,6 +55,16 @@ provider:
             - sqs:GetQueueAttributes
           Resource:
             - !GetAtt UserEventsQueue.Arn
+        - Effect: Allow
+          Action:
+            - dynamodb:PutItem
+            - dynamodb:GetItem
+            - dynamodb:UpdateItem
+            - dynamodb:DeleteItem
+            - dynamodb:Query
+          Resource:
+            - !GetAtt PayrollTable.Arn
+            - !Sub "${PayrollTable.Arn}/index/userId-index"
 
 package:                                        
   patterns:
@@ -59,6 +74,7 @@ package:
     - "!*.pyc"
     - "!.build/**"
     - "users/**"
+    - "payroll/**"
     - "lambdas/**"
     - "dependencies/**"
 
@@ -89,6 +105,17 @@ functions:
       - http:
           path: /user/{id}
           method: put
+          cors: true
+  payrollApi:
+    handler: payroll.main.handler
+    events:
+      - http:
+          path: /api/v1/payroll
+          method: any
+          cors: true
+      - http:
+          path: /api/v1/payroll/{proxy+}
+          method: any
           cors: true
 
 resources:
@@ -149,3 +176,24 @@ resources:
               Condition:
                 ArnEquals:
                   aws:SourceArn: !GetAtt UserUpdatedEventRule.Arn
+
+    PayrollTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: payroll_salary
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: payrollId
+            AttributeType: S
+          - AttributeName: userId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: payrollId
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: userId-index
+            KeySchema:
+              - AttributeName: userId
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL

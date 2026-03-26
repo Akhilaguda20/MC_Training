@@ -7,12 +7,6 @@ process_user Lambda after the event travels through SQS.
 """
 
 import json
-import os
-import sys
-
-if os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):  # pragma: no cover
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "dependencies"))
-
 from users.core.config import settings
 from users.db.session import get_eventbridge_client
 from users.publishers.eventbridge import EventBridgePublisher

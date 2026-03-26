@@ -17,12 +17,6 @@ keeping the write path decoupled from the HTTP API.
 """
 
 import json
-import os
-import sys
-
-# Ensure bundled dependencies are importable in Lambda
-if os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):  # pragma: no cover
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "dependencies"))
 
 from users.core.config import settings
 from users.db.session import get_dynamodb_client
