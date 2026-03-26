@@ -1,0 +1,8 @@
+.env
+dependencies/
+venv/
+.serverless/
+payload.json
+response.json
+__pycache__/
+*.pyc
