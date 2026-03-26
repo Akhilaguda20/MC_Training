@@ -1,0 +1,62 @@
+service: user-events-service
+
+provider:
+  name: aws
+  runtime: python3.9
+  region: us-east-1
+
+  environment:
+    TABLE_NAME: users_events
+
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - dynamodb:UpdateItem
+          Resource:
+            - arn:aws:dynamodb:${self:provider.region}:${aws:accountId}:table/users_events
+
+        - Effect: Allow
+          Action:
+            - events:PutEvents
+          Resource: "*"
+
+package:
+  patterns:
+    - common/**
+    - process_user/**
+    - update_user/**
+
+functions:
+
+  updateUser:
+    handler: update_user/handler.lambda_handler
+    events:
+      - httpApi:
+          path: /user/{id}
+          method: put
+
+  processUserUpdate:
+    handler:  process_user/handler.lambda_handler
+    events:
+      - eventBridge:
+          pattern:
+            source:
+              - user.service
+            detail-type:
+              - UserUpdated
+
+resources:
+  Resources:
+    UsersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: users_events
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: userId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
