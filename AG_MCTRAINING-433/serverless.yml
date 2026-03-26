@@ -1,0 +1,151 @@
+service: user-events-service
+
+plugins:
+  - serverless-localstack
+  - serverless-python-requirements        
+custom:
+  pythonRequirements:
+    dockerizePip: true
+    slim: true
+    dockerImage: public.ecr.aws/sam/build-python3.11:latest-arm64
+    fileName: requirements.txt
+  localstack:
+    stages:
+      - local
+    host: http://localhost
+    edgePort: 4566
+    autostart: true
+
+provider:
+  name: aws
+  runtime: python3.11
+  region: us-east-1
+  stage: ${opt:stage, 'dev'}
+  architecture: arm64
+
+  environment:
+    TABLE_NAME: users_events
+    QUEUE_URL:
+      Ref: UserEventsQueue
+    EVENT_BUS_NAME: user-events-bus
+    LOCALSTACK_URL: http://host.docker.internal:4566   
+
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - dynamodb:UpdateItem
+          Resource:
+            - !GetAtt UsersTable.Arn
+        - Effect: Allow
+          Action:
+            - events:PutEvents
+          Resource:
+            - !GetAtt UserEventsBus.Arn
+        - Effect: Allow
+          Action:
+            - sqs:ReceiveMessage
+            - sqs:DeleteMessage
+            - sqs:GetQueueAttributes
+          Resource:
+            - !GetAtt UserEventsQueue.Arn
+
+package:                                        
+  patterns:
+    - "!node_modules/**"
+    - "!.venv/**"
+    - "!__pycache__/**"
+    - "!*.pyc"
+    - "!.build/**"
+    - "users/**"
+    - "lambdas/**"
+    - "dependencies/**"
+
+functions:
+  api:
+    handler: users.main.handler
+    events:
+      - http:
+          path: /
+          method: any
+          cors: true
+      - http:
+          path: /{proxy+}
+          method: any
+          cors: true
+  processUserUpdate:
+    handler: lambdas.process_user.handler.lambda_handler
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - UserEventsQueue
+              - Arn
+          batchSize: 5
+  updateUser:                         
+    handler: lambdas.update_user.handler.lambda_handler
+    events:
+      - http:
+          path: /user/{id}
+          method: put
+          cors: true
+
+resources:
+  Resources:
+    UserEventsBus:
+      Type: AWS::Events::EventBus
+      Properties:
+        Name: user-events-bus
+
+    UserEventsQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: UserEventsQueue
+
+    UserUpdatedEventRule:
+      Type: AWS::Events::Rule
+      Properties:
+        Name: UserUpdatedToSQS
+        EventBusName:
+          Ref: UserEventsBus
+        EventPattern:
+          source:
+            - user.service
+          detail-type:
+            - UserUpdated
+        Targets:
+          - Arn:
+              Fn::GetAtt:
+                - UserEventsQueue
+                - Arn
+            Id: "UserEventsQueueTarget"
+
+    UsersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: users_events
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: userId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
+
+    UserEventsQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - !Ref UserEventsQueue
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: events.amazonaws.com
+              Action: sqs:SendMessage
+              Resource: !GetAtt UserEventsQueue.Arn
+              Condition:
+                ArnEquals:
+                  aws:SourceArn: !GetAtt UserUpdatedEventRule.Arn
