@@ -2,13 +2,7 @@ service: user-events-service
 
 plugins:
   - serverless-localstack
-  - serverless-python-requirements        
 custom:
-  pythonRequirements:
-    dockerizePip: true
-    slim: true
-    dockerImage: public.ecr.aws/sam/build-python3.11:latest-arm64
-    fileName: requirements.txt
   localstack:
     stages:
       - local
@@ -26,6 +20,15 @@ provider:
   stage: ${opt:stage, 'dev'}
   architecture: arm64
 
+  apiGateway:
+    metrics: true  # enables detailed CloudWatch metrics per resource/method in AWS/ApiGateway namespace
+
+  logs:
+    restApi:
+      accessLogging: true
+      executionLogging: false
+      format: '{"requestId":"$context.requestId","ip":"$context.identity.sourceIp","httpMethod":"$context.httpMethod","resourcePath":"$context.resourcePath","status":$context.status,"responseLatency":$context.responseLatency,"integrationLatency":$context.integrationLatency,"requestTime":"$context.requestTime"}'
+
   environment:
     TABLE_NAME: users_events
     QUEUE_URL:
@@ -42,7 +45,11 @@ provider:
       statements:
         - Effect: Allow
           Action:
+            - dynamodb:PutItem
+            - dynamodb:GetItem
             - dynamodb:UpdateItem
+            - dynamodb:DeleteItem
+            - dynamodb:Query
           Resource:
             - !GetAtt UsersTable.Arn
         - Effect: Allow
@@ -249,3 +256,116 @@ resources:
                 KeyType: HASH
             Projection:
               ProjectionType: ALL
+
+    ApiMetricsDashboard:
+      Type: AWS::CloudWatch::Dashboard
+      Properties:
+        DashboardName: ${self:service}-${self:provider.stage}-api-metrics
+        DashboardBody: |-
+          {
+            "widgets": [
+              {
+                "type": "metric",
+                "x": 0, "y": 0, "width": 24, "height": 6,
+                "properties": {
+                  "title": "Total Request Volume",
+                  "view": "timeSeries",
+                  "region": "us-east-1",
+                  "metrics": [
+                    [{"expression": "SUM(SEARCH(' {UserService/Api,Method,Route} RequestCount ', 'Sum', 60))", "id": "e1", "label": "Users Total"}],
+                    [{"expression": "SUM(SEARCH(' {PayrollService/Api,Method,Route} RequestCount ', 'Sum', 60))", "id": "e2", "label": "Payroll Total"}]
+                  ],
+                  "period": 60,
+                  "yAxis": {"left": {"min": 0}}
+                }
+              },
+              {
+                "type": "metric",
+                "x": 0, "y": 6, "width": 12, "height": 6,
+                "properties": {
+                  "title": "Throughput per API — Users (req/min)",
+                  "view": "timeSeries",
+                  "region": "us-east-1",
+                  "metrics": [
+                    [{"expression": "SEARCH(' {UserService/Api,Method,Route} RequestCount ', 'Sum', 60)", "id": "e3"}]
+                  ],
+                  "period": 60,
+                  "yAxis": {"left": {"min": 0}}
+                }
+              },
+              {
+                "type": "metric",
+                "x": 12, "y": 6, "width": 12, "height": 6,
+                "properties": {
+                  "title": "Throughput per API — Payroll (req/min)",
+                  "view": "timeSeries",
+                  "region": "us-east-1",
+                  "metrics": [
+                    [{"expression": "SEARCH(' {PayrollService/Api,Method,Route} RequestCount ', 'Sum', 60)", "id": "e4"}]
+                  ],
+                  "period": 60,
+                  "yAxis": {"left": {"min": 0}}
+                }
+              },
+              {
+                "type": "metric",
+                "x": 0, "y": 12, "width": 12, "height": 6,
+                "properties": {
+                  "title": "Latency p50 per API (ms)",
+                  "view": "timeSeries",
+                  "region": "us-east-1",
+                  "metrics": [
+                    [{"expression": "SEARCH(' {UserService/Api,Method,Route} Latency ', 'p50', 60)", "id": "e5"}],
+                    [{"expression": "SEARCH(' {PayrollService/Api,Method,Route} Latency ', 'p50', 60)", "id": "e6"}]
+                  ],
+                  "period": 60,
+                  "yAxis": {"left": {"min": 0}}
+                }
+              },
+              {
+                "type": "metric",
+                "x": 12, "y": 12, "width": 12, "height": 6,
+                "properties": {
+                  "title": "Latency p95 per API (ms)",
+                  "view": "timeSeries",
+                  "region": "us-east-1",
+                  "metrics": [
+                    [{"expression": "SEARCH(' {UserService/Api,Method,Route} Latency ', 'p95', 60)", "id": "e7"}],
+                    [{"expression": "SEARCH(' {PayrollService/Api,Method,Route} Latency ', 'p95', 60)", "id": "e8"}]
+                  ],
+                  "period": 60,
+                  "yAxis": {"left": {"min": 0}}
+                }
+              },
+              {
+                "type": "metric",
+                "x": 0, "y": 18, "width": 12, "height": 6,
+                "properties": {
+                  "title": "4xx Errors per API",
+                  "view": "timeSeries",
+                  "region": "us-east-1",
+                  "metrics": [
+                    [{"expression": "SEARCH(' {UserService/Api,Method,Route} Is4xxError ', 'Sum', 60)", "id": "e9"}],
+                    [{"expression": "SEARCH(' {PayrollService/Api,Method,Route} Is4xxError ', 'Sum', 60)", "id": "e10"}]
+                  ],
+                  "period": 60,
+                  "yAxis": {"left": {"min": 0}}
+                }
+              },
+              {
+                "type": "metric",
+                "x": 12, "y": 18, "width": 12, "height": 6,
+                "properties": {
+                  "title": "5xx Errors per API",
+                  "view": "timeSeries",
+                  "region": "us-east-1",
+                  "metrics": [
+                    [{"expression": "SEARCH(' {UserService/Api,Method,Route} Is5xxError ', 'Sum', 60)", "id": "e11"}],
+                    [{"expression": "SEARCH(' {PayrollService/Api,Method,Route} Is5xxError ', 'Sum', 60)", "id": "e12"}]
+                  ],
+                  "period": 60,
+                  "yAxis": {"left": {"min": 0}}
+                }
+              }
+            ]
+          }

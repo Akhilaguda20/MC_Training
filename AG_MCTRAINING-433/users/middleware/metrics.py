@@ -1,28 +1,42 @@
 import time
 
+from aws_embedded_metrics import metric_scope
 from fastapi import Request
-from prometheus_client import Counter, Histogram
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.routing import Match
 
-REQUEST_COUNT = Counter(
-    "api_requests_total",
-    "Total number of HTTP requests",
-    ["method", "path", "status"],
-)
 
-REQUEST_LATENCY = Histogram(
-    "api_request_latency_seconds",
-    "HTTP request latency in seconds",
-    ["method", "path"],
-    buckets=[0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5],
-)
+@metric_scope
+async def _emit_metrics(
+    namespace: str, method: str, route: str, latency_ms: float, status: int, metrics
+):
+    metrics.set_namespace(namespace)
+    # set_dimensions replaces Lambda default dimensions (FunctionName, LogGroup, etc.)
+    # so the only CloudWatch dimensions are Method + Route, giving clean per-route series.
+    metrics.set_dimensions({"Method": method, "Route": route})
+    metrics.put_metric("RequestCount", 1, "Count")
+    metrics.put_metric("Latency", latency_ms, "Milliseconds")
+    metrics.put_metric("Is4xxError", 1 if 400 <= status < 500 else 0, "Count")
+    metrics.put_metric("Is5xxError", 1 if status >= 500 else 0, "Count")
 
 
 class MetricsMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
-        start = time.time()
-        response = await call_next(request)
-        latency = time.time() - start
-        REQUEST_COUNT.labels(request.method, request.url.path, response.status_code).inc()
-        REQUEST_LATENCY.labels(request.method, request.url.path).observe(latency)
-        return response
+        start = time.time() # start time
+        response = await call_next(request) # runt the actual route handler
+        latency_ms = (time.time() - start) * 1000 # calculate duration
+
+        route = self._resolve_route(request) # get route template for metrics dimension
+        await _emit_metrics( # send metrics to CloudWatch
+            "UserService/Api", request.method, route, latency_ms, response.status_code
+        )
+        return response #pass response back to client
+
+    def _resolve_route(self, request: Request) -> str:
+        """Return the matched route template path (e.g. /api/v1/users/{user_id})
+        instead of the concrete URL, to avoid high-cardinality metric dimensions."""
+        for route in request.app.routes:
+            match, _ = route.matches(request.scope)
+            if match == Match.FULL:
+                return getattr(route, "path", request.url.path)
+        return request.url.path
