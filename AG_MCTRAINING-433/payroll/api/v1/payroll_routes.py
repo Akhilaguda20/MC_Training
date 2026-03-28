@@ -16,6 +16,15 @@ async def create_payroll(
     return {"message": "Payroll record created", "payrollId": payroll_id}
 
 
+@router.get("/payroll/user/{user_id}")
+async def list_payroll_by_user(
+    user_id: str,
+    service: PayrollService = Depends(get_payroll_service),
+):
+    records = service.list_payroll_by_user(user_id)
+    return {"userId": user_id, "records": records}
+
+
 @router.get("/payroll/{payroll_id}")
 async def get_payroll(
     payroll_id: str,
@@ -25,15 +34,6 @@ async def get_payroll(
     if not record:
         raise HTTPException(status_code=404, detail="Payroll record not found")
     return record
-
-
-@router.get("/payroll/user/{user_id}")
-async def list_payroll_by_user(
-    user_id: str,
-    service: PayrollService = Depends(get_payroll_service),
-):
-    records = service.list_payroll_by_user(user_id)
-    return {"userId": user_id, "records": records}
 
 
 @router.put("/payroll/{payroll_id}")

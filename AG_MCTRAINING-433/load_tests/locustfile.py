@@ -6,8 +6,6 @@ from load_tests.users_tasks import UserTasks
 
 # ── Simulated user types ───────────────────────────────────────────────────────
 
-LOCALSTACK_HOST = "http://localhost:4566/restapis/cvewbmgixp/local/_user_request_"
-
 
 class UserServiceLoad(HttpUser):
     """
@@ -15,7 +13,7 @@ class UserServiceLoad(HttpUser):
     Routes: /api/v1/users/*
     """
 
-    host = LOCALSTACK_HOST
+    host = HOST
     tasks = [UserTasks]
     wait_time = between(0.5, 2)
     weight = 3                   # 3x more user-service traffic than payroll
@@ -27,7 +25,7 @@ class PayrollServiceLoad(HttpUser):
     Routes: /api/v1/payroll/*
     """
 
-    host = LOCALSTACK_HOST       
+    host =HOST       
     tasks = [PayrollTasks]
     wait_time = between(1, 3)
     weight = 1

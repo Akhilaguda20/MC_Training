@@ -1,7 +1,7 @@
 import uuid
 from datetime import date
 
-LOCALSTACK_BASE_URL = "http://localhost:4566/restapis/cvewbmgixp/local/_user_request_"
+BASE_URL = "https://r1pbwtumcj.execute-api.us-east-1.amazonaws.com/dev/"
 
 def make_user_payload() -> dict:
     uid = uuid.uuid4().hex[:8]

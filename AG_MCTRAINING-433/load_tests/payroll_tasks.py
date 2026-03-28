@@ -20,11 +20,9 @@ class PayrollTasks(TaskSet):
       - delete_payroll       → weight 1  (rare delete)
     """
 
-    # pool of {"user_id": ..., "payroll_id": ...} entries for read tasks
-    pool: list = []
-
     def on_start(self):
         """Runs once when a simulated user starts. Seed the pool."""
+        self.pool: list = []
         self._seed_payroll_record()
 
     def _seed_payroll_record(self):

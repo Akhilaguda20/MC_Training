@@ -18,10 +18,9 @@ class UserTasks(TaskSet):
       - delete_user → weight 1  (rare delete)
     """
 
-    created_user_ids: list = []
-
     def on_start(self):
         """Runs once when a simulated user starts. Seed the ID pool."""
+        self.created_user_ids: list = []
         self._create_seed_user()
 
     def _create_seed_user(self):
