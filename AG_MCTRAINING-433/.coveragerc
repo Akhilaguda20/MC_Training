@@ -1,0 +1,11 @@
+[run]
+omit =
+    dependencies/*
+    users/tests/*
+    venv/*
+
+[report]
+omit =
+    dependencies/*
+    users/tests/*
+    venv/*
