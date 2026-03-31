@@ -25,6 +25,9 @@ class InMemoryUserRepository:
     def get(self, user_id: str):
         return self._store.get(user_id)
 
+    def list_all(self) -> list[dict]:
+        return list(self._store.values())
+
     def update(self, user_id: str, data=None) -> None:
         if user_id in self._store:
             self._store[user_id]["status"] = "UPDATED"

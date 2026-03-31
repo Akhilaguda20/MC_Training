@@ -2,13 +2,8 @@ service: user-events-service
 
 plugins:
   - serverless-localstack
-  - serverless-python-requirements        
+  - serverless-iam-roles-per-function   # enables per-function iamRoleStatements
 custom:
-  pythonRequirements:
-    dockerizePip: true
-    slim: true
-    dockerImage: public.ecr.aws/sam/build-python3.11:latest-arm64
-    fileName: requirements.txt
   localstack:
     stages:
       - local
@@ -22,76 +17,117 @@ custom:
 provider:
   name: aws
   runtime: python3.11
-  region: us-east-1
+  region: ${opt:region, 'us-east-1'}
   stage: ${opt:stage, 'dev'}
+  stackName: ${self:service}-${self:provider.stage}
   architecture: arm64
+  memorySize: 128
+  timeout: 10
+  endpointType: REGIONAL
+
+  apiGateway:
+    description: API Gateway for User and Payroll CRUD operations
+    metrics: true  # enables detailed CloudWatch metrics per resource/method in AWS/ApiGateway namespace
+
+  logs:
+    restApi:
+      accessLogging: true
+      executionLogging: false
+      format: '{"requestId":"$context.requestId","ip":"$context.identity.sourceIp","httpMethod":"$context.httpMethod","resourcePath":"$context.resourcePath","status":$context.status,"responseLatency":$context.responseLatency,"integrationLatency":$context.integrationLatency,"requestTime":"$context.requestTime"}'
 
   environment:
-    TABLE_NAME: users_events
-    QUEUE_URL:
-      Ref: UserEventsQueue
-    EVENT_BUS_NAME: user-events-bus
-    PAYROLL_TABLE_NAME: payroll_salary
+    TABLE_NAME: !Ref UsersTable
+    QUEUE_URL: !Ref UserEventsQueue
+    EVENT_BUS_NAME: !Ref UserEventsBus
+    PAYROLL_TABLE_NAME: !Ref PayrollTable
+    PAYROLL_USER_CREATED_QUEUE_URL: !Ref PayrollUserCreatedQueue
     LOCALSTACK_URL: ${self:custom.localstackUrl.${opt:stage, 'dev'}, ''}
     PYTHONPATH: /var/task/dependencies
 
-  iam:
-    role:
-      statements:
-        - Effect: Allow
-          Action:
-            - dynamodb:UpdateItem
-          Resource:
-            - !GetAtt UsersTable.Arn
-        - Effect: Allow
-          Action:
-            - events:PutEvents
-          Resource:
-            - !GetAtt UserEventsBus.Arn
-        - Effect: Allow
-          Action:
-            - sqs:ReceiveMessage
-            - sqs:DeleteMessage
-            - sqs:GetQueueAttributes
-          Resource:
-            - !GetAtt UserEventsQueue.Arn
-        - Effect: Allow
-          Action:
-            - dynamodb:PutItem
-            - dynamodb:GetItem
-            - dynamodb:UpdateItem
-            - dynamodb:DeleteItem
-            - dynamodb:Query
-          Resource:
-            - !GetAtt PayrollTable.Arn
-            - !Sub "${PayrollTable.Arn}/index/userId-index"
-
-package:                                        
-  patterns:
-    - "!node_modules/**"
-    - "!.venv/**"
-    - "!__pycache__/**"
-    - "!*.pyc"
-    - "!.build/**"
-    - "users/**"
-    - "payroll/**"
-    - "lambdas/**"
-    - "dependencies/**"
+package:
+  individually: true  # each function zips only its own files
 
 functions:
-  api:
-    handler: users.main.handler
+  payrollApi:
+    handler: payroll.main.handler
+    package:
+      patterns:
+        - '!**'
+        - 'payroll/**'
+        - 'dependencies/**'
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+          - dynamodb:GetItem
+          - dynamodb:UpdateItem
+          - dynamodb:DeleteItem
+          - dynamodb:Query
+          - dynamodb:Scan
+        Resource:
+          - !GetAtt PayrollTable.Arn
+          - !Sub "${PayrollTable.Arn}/index/userId-index"
     events:
       - http:
-          path: /
+          path: /payroll
           method: any
           cors: true
       - http:
-          path: /{proxy+}
+          path: /payroll/{proxy+}
+          method: any
+          cors: true
+  api:
+    handler: users.main.handler
+    package:
+      patterns:
+        - '!**'
+        - 'users/**'
+        - 'dependencies/**'
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+          - dynamodb:GetItem
+          - dynamodb:UpdateItem
+          - dynamodb:DeleteItem
+          - dynamodb:Query
+          - dynamodb:Scan
+        Resource:
+          - !GetAtt UsersTable.Arn
+      - Effect: Allow
+        Action:
+          - events:PutEvents
+        Resource:
+          - !GetAtt UserEventsBus.Arn
+    events:
+      - http:
+          path: /users
+          method: any
+          cors: true
+      - http:
+          path: /users/{proxy+}
           method: any
           cors: true
   processUserUpdate:
-    handler: lambdas.process_user.handler.lambda_handler
+    handler: users.lambdas.process_user.handler.lambda_handler
+    package:
+      patterns:
+        - '!**'
+        - 'users/**'
+        - 'dependencies/**'
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:UpdateItem
+        Resource:
+          - !GetAtt UsersTable.Arn
+      - Effect: Allow
+        Action:
+          - sqs:ReceiveMessage
+          - sqs:DeleteMessage
+          - sqs:GetQueueAttributes
+        Resource:
+          - !GetAtt UserEventsQueue.Arn
     events:
       - sqs:
           arn:
@@ -99,24 +135,51 @@ functions:
               - UserEventsQueue
               - Arn
           batchSize: 5
-  updateUser:                         
-    handler: lambdas.update_user.handler.lambda_handler
+  updateUser:
+    handler: users.lambdas.update_user.handler.lambda_handler
+    package:
+      patterns:
+        - '!**'
+        - 'users/**'
+        - 'dependencies/**'
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - events:PutEvents
+        Resource:
+          - !GetAtt UserEventsBus.Arn
     events:
       - http:
           path: /user/{id}
           method: put
           cors: true
-  payrollApi:
-    handler: payroll.main.handler
+  createPayrollOnUserCreated:
+    handler: payroll.lambdas.create_payroll_for_user.handler.lambda_handler
+    package:
+      patterns:
+        - '!**'
+        - 'payroll/**'
+        - 'dependencies/**'
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+        Resource:
+          - !GetAtt PayrollTable.Arn
+      - Effect: Allow
+        Action:
+          - sqs:ReceiveMessage
+          - sqs:DeleteMessage
+          - sqs:GetQueueAttributes
+        Resource:
+          - !GetAtt PayrollUserCreatedQueue.Arn
     events:
-      - http:
-          path: /api/v1/payroll
-          method: any
-          cors: true
-      - http:
-          path: /api/v1/payroll/{proxy+}
-          method: any
-          cors: true
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - PayrollUserCreatedQueue
+              - Arn
+          batchSize: 5
 
 resources:
   Resources:
@@ -125,10 +188,48 @@ resources:
       Properties:
         Name: user-events-bus
 
+    UserEventBusLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/events/${self:service}-${self:provider.stage}/user-events-bus
+        RetentionInDays: 30
+
+    UserEventBusLogPolicy:
+      Type: AWS::Logs::ResourcePolicy
+      Properties:
+        PolicyName: ${self:service}-${self:provider.stage}-eventbridge-log-policy
+        PolicyDocument: !Sub |
+          {
+            "Version": "2012-10-17",
+            "Statement": [{
+              "Effect": "Allow",
+              "Principal": {
+                "Service": ["events.amazonaws.com", "delivery.logs.amazonaws.com"]
+              },
+              "Action": ["logs:CreateLogStream", "logs:PutLogEvents"],
+              "Resource": "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/events/${self:service}-${self:provider.stage}/user-events-bus:*"
+            }]
+          }
+
+    UserEventBusLoggingRule:
+      Type: AWS::Events::Rule
+      Properties:
+        Name: ${self:service}-${self:provider.stage}-all-events-to-logs
+        Description: "Routes all user.service events to CloudWatch Logs for auditing"
+        EventBusName: !Ref UserEventsBus
+        EventPattern:
+          source:
+            - user.service
+        State: ENABLED
+        Targets:
+          - Arn: !GetAtt UserEventBusLogGroup.Arn
+            Id: "UserEventBusLogTarget"
+
     UserEventsQueue:
       Type: AWS::SQS::Queue
       Properties:
         QueueName: UserEventsQueue
+        VisibilityTimeout: 30
 
     UserUpdatedEventRule:
       Type: AWS::Events::Rule
@@ -177,6 +278,47 @@ resources:
                 ArnEquals:
                   aws:SourceArn: !GetAtt UserUpdatedEventRule.Arn
 
+    PayrollUserCreatedQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: PayrollUserCreatedQueue
+        VisibilityTimeout: 30
+
+    UserCreatedEventRule:
+      Type: AWS::Events::Rule
+      Properties:
+        Name: UserCreatedToPayrollSQS
+        EventBusName:
+          Ref: UserEventsBus
+        EventPattern:
+          source:
+            - user.service
+          detail-type:
+            - UserCreated
+        Targets:
+          - Arn:
+              Fn::GetAtt:
+                - PayrollUserCreatedQueue
+                - Arn
+            Id: "PayrollUserCreatedQueueTarget"
+
+    PayrollUserCreatedQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - !Ref PayrollUserCreatedQueue
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: events.amazonaws.com
+              Action: sqs:SendMessage
+              Resource: !GetAtt PayrollUserCreatedQueue.Arn
+              Condition:
+                ArnEquals:
+                  aws:SourceArn: !GetAtt UserCreatedEventRule.Arn
+
     PayrollTable:
       Type: AWS::DynamoDB::Table
       Properties:
@@ -197,3 +339,142 @@ resources:
                 KeyType: HASH
             Projection:
               ProjectionType: ALL
+
+    ApiMetricsDashboard:
+      Type: AWS::CloudWatch::Dashboard
+      Properties:
+        DashboardName: ${self:service}-${self:provider.stage}-api-metrics
+        DashboardBody: |-
+          {
+            "widgets": [
+              {
+                "type": "metric",
+                "x": 0, "y": 0, "width": 24, "height": 6,
+                "properties": {
+                  "title": "Total Request Volume",
+                  "view": "timeSeries",
+                  "region": "us-east-1",
+                  "metrics": [
+                    [{"expression": "SUM(SEARCH(' {UserService/Api,Method,Route} RequestCount ', 'Sum', 60))", "id": "e1", "label": "Users Total"}],
+                    [{"expression": "SUM(SEARCH(' {PayrollService/Api,Method,Route} RequestCount ', 'Sum', 60))", "id": "e2", "label": "Payroll Total"}]
+                  ],
+                  "period": 60,
+                  "yAxis": {"left": {"min": 0}}
+                }
+              },
+              {
+                "type": "metric",
+                "x": 0, "y": 6, "width": 12, "height": 6,
+                "properties": {
+                  "title": "Throughput per API — Users (req/min)",
+                  "view": "timeSeries",
+                  "region": "us-east-1",
+                  "metrics": [
+                    [{"expression": "SEARCH(' {UserService/Api,Method,Route} RequestCount ', 'Sum', 60)", "id": "e3"}]
+                  ],
+                  "period": 60,
+                  "yAxis": {"left": {"min": 0}}
+                }
+              },
+              {
+                "type": "metric",
+                "x": 12, "y": 6, "width": 12, "height": 6,
+                "properties": {
+                  "title": "Throughput per API — Payroll (req/min)",
+                  "view": "timeSeries",
+                  "region": "us-east-1",
+                  "metrics": [
+                    [{"expression": "SEARCH(' {PayrollService/Api,Method,Route} RequestCount ', 'Sum', 60)", "id": "e4"}]
+                  ],
+                  "period": 60,
+                  "yAxis": {"left": {"min": 0}}
+                }
+              },
+              {
+                "type": "metric",
+                "x": 0, "y": 12, "width": 12, "height": 6,
+                "properties": {
+                  "title": "Latency p50 per API (ms)",
+                  "view": "timeSeries",
+                  "region": "us-east-1",
+                  "metrics": [
+                    [{"expression": "SEARCH(' {UserService/Api,Method,Route} Latency ', 'p50', 60)", "id": "e5"}],
+                    [{"expression": "SEARCH(' {PayrollService/Api,Method,Route} Latency ', 'p50', 60)", "id": "e6"}]
+                  ],
+                  "period": 60,
+                  "yAxis": {"left": {"min": 0}}
+                }
+              },
+              {
+                "type": "metric",
+                "x": 12, "y": 12, "width": 12, "height": 6,
+                "properties": {
+                  "title": "Latency p95 per API (ms)",
+                  "view": "timeSeries",
+                  "region": "us-east-1",
+                  "metrics": [
+                    [{"expression": "SEARCH(' {UserService/Api,Method,Route} Latency ', 'p95', 60)", "id": "e7"}],
+                    [{"expression": "SEARCH(' {PayrollService/Api,Method,Route} Latency ', 'p95', 60)", "id": "e8"}]
+                  ],
+                  "period": 60,
+                  "yAxis": {"left": {"min": 0}}
+                }
+              },
+              {
+                "type": "metric",
+                "x": 0, "y": 18, "width": 12, "height": 6,
+                "properties": {
+                  "title": "4xx Errors per API",
+                  "view": "timeSeries",
+                  "region": "us-east-1",
+                  "metrics": [
+                    [{"expression": "SEARCH(' {UserService/Api,Method,Route} Is4xxError ', 'Sum', 60)", "id": "e9"}],
+                    [{"expression": "SEARCH(' {PayrollService/Api,Method,Route} Is4xxError ', 'Sum', 60)", "id": "e10"}]
+                  ],
+                  "period": 60,
+                  "yAxis": {"left": {"min": 0}}
+                }
+              },
+              {
+                "type": "metric",
+                "x": 12, "y": 18, "width": 12, "height": 6,
+                "properties": {
+                  "title": "5xx Errors per API",
+                  "view": "timeSeries",
+                  "region": "us-east-1",
+                  "metrics": [
+                    [{"expression": "SEARCH(' {UserService/Api,Method,Route} Is5xxError ', 'Sum', 60)", "id": "e11"}],
+                    [{"expression": "SEARCH(' {PayrollService/Api,Method,Route} Is5xxError ', 'Sum', 60)", "id": "e12"}]
+                  ],
+                  "period": 60,
+                  "yAxis": {"left": {"min": 0}}
+                }
+              }
+            ]
+          }
+
+  Outputs:
+    ApiBaseUrl:
+      Description: Base URL of the deployed API
+      Value:
+        Fn::Sub: "https://${ApiGatewayRestApi}.execute-api.${AWS::Region}.amazonaws.com/${self:provider.stage}"
+      Export:
+        Name: ${self:service}-api-base-url-${self:provider.stage}
+    UsersTableName:
+      Description: DynamoDB Users table name
+      Value: !Ref UsersTable
+    PayrollTableName:
+      Description: DynamoDB Payroll table name
+      Value: !Ref PayrollTable
+    UserEventBusName:
+      Description: EventBridge custom bus for user domain events
+      Value: !Ref UserEventsBus
+    UserEventsQueueUrl:
+      Description: SQS queue URL for user domain events
+      Value: !Ref UserEventsQueue
+    PayrollUserCreatedQueueUrl:
+      Description: SQS queue URL for payroll user-created events
+      Value: !Ref PayrollUserCreatedQueue
+    ApiDashboardUrl:
+      Description: CloudWatch dashboard URL for API metrics
+      Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=${self:service}-${self:provider.stage}-api-metrics"

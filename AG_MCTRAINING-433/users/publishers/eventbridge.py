@@ -1,4 +1,7 @@
 import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class EventBridgePublisher:
@@ -12,7 +15,16 @@ class EventBridgePublisher:
         self._bus = event_bus_name
 
     def publish(self, detail_type: str, detail: dict) -> None:
-        self._client.put_events(
+        logger.info(
+            "Publishing EventBridge event",
+            extra={
+                "event_bus": self._bus,
+                "detail_type": detail_type,
+                "detail": detail,
+            },
+        )
+
+        response = self._client.put_events(
             Entries=[
                 {
                     "Source": "user.service",
@@ -21,4 +33,31 @@ class EventBridgePublisher:
                     "EventBusName": self._bus,
                 }
             ]
+        )
+
+        failed = response.get("FailedEntryCount", 0)
+        if failed:
+            for entry in response.get("Entries", []):
+                if entry.get("ErrorCode"):
+                    logger.error(
+                        "EventBridge entry failed",
+                        extra={
+                            "event_bus": self._bus,
+                            "detail_type": detail_type,
+                            "error_code": entry["ErrorCode"],
+                            "error_message": entry.get("ErrorMessage"),
+                        },
+                    )
+            raise RuntimeError(
+                f"EventBridge put_events failed for {detail_type!r}: "
+                f"{failed} entr{'y' if failed == 1 else 'ies'} rejected"
+            )
+
+        logger.info(
+            "EventBridge event accepted",
+            extra={
+                "event_bus": self._bus,
+                "detail_type": detail_type,
+                "event_id": response["Entries"][0].get("EventId"),
+            },
         )

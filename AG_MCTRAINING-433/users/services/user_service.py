@@ -27,6 +27,9 @@ class UserService:
     def get_user(self, user_id: str) -> Optional[dict]:
         return self._repo.get(user_id)
 
+    def list_users(self) -> list[dict]:
+        return self._repo.list_all()
+
     def update_user(self, user_id: str, data: dict) -> None:
         # Publishes event only — a downstream Lambda (process_user) applies
         # the update to DynamoDB after consuming the event from the queue.

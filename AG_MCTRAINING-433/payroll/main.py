@@ -4,15 +4,15 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from mangum import Mangum
 
-from users.api.v1.user_routes import router as user_router
-from users.middleware.metrics import MetricsMiddleware
+from payroll.api.v1.payroll_routes import router as payroll_router
+from payroll.middleware.metrics import MetricsMiddleware
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
 
-app = FastAPI(title="User Service", version="1.0.0")
+app = FastAPI(title="Payroll Service", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -21,7 +21,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.add_middleware(MetricsMiddleware)
-app.include_router(user_router)
+app.include_router(payroll_router)
 
 # Mangum wraps the ASGI app so AWS Lambda / API Gateway can invoke it
 handler = Mangum(app, lifespan="off")

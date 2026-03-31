@@ -240,3 +240,40 @@ class TestDeleteUserRoute:
 
         assert response.status_code == 200
         assert repo.get("u-del") is None
+
+
+class TestListUsersRoute:
+    def test_returns_empty_list_when_no_users(self, client):
+        http, _, _ = client
+        response = http.get("/api/v1/users")
+        assert response.status_code == 200
+        assert response.json() == []
+
+    def test_returns_all_users(self, client):
+        http, repo, _ = client
+        repo.create("u-a", {"name": "Alice", "email": "a@b.com"})
+        repo.create("u-b", {"name": "Bob", "email": "b@b.com"})
+
+        response = http.get("/api/v1/users")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 2
+        ids = {u["userId"] for u in data}
+        assert ids == {"u-a", "u-b"}
+
+
+class TestUserServiceListUsers:
+    def test_returns_all_users_from_repo(self):
+        repo = InMemoryUserRepository()
+        service = make_service(repo=repo)
+        service.create_user({"userId": "u-1", "name": "Alice", "email": "a@b.com"})
+        service.create_user({"userId": "u-2", "name": "Bob", "email": "b@b.com"})
+
+        result = service.list_users()
+
+        assert len(result) == 2
+
+    def test_returns_empty_list_when_no_users(self):
+        service = make_service()
+        assert service.list_users() == []

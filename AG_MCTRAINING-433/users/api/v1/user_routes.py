@@ -7,6 +7,13 @@ from users.services.user_service import UserService
 router = APIRouter(tags=["users"])
 
 
+@router.get("/users")
+async def list_users(
+    service: UserService = Depends(get_user_service),
+):
+    return service.list_users()
+
+
 @router.post("/users", status_code=201)
 async def create_user(
     body: UserCreateRequest,
