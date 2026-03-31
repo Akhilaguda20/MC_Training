@@ -1,0 +1,251 @@
+service: user-events-service
+
+plugins:
+  - serverless-localstack
+  - serverless-python-requirements        
+custom:
+  pythonRequirements:
+    dockerizePip: true
+    slim: true
+    dockerImage: public.ecr.aws/sam/build-python3.11:latest-arm64
+    fileName: requirements.txt
+  localstack:
+    stages:
+      - local
+    host: http://localhost
+    edgePort: 4566
+    autostart: true
+  localstackUrl:
+    local: http://host.docker.internal:4566
+    dev: ""
+
+provider:
+  name: aws
+  runtime: python3.11
+  region: us-east-1
+  stage: ${opt:stage, 'dev'}
+  architecture: arm64
+
+  environment:
+    TABLE_NAME: users_events
+    QUEUE_URL:
+      Ref: UserEventsQueue
+    EVENT_BUS_NAME: user-events-bus
+    PAYROLL_TABLE_NAME: payroll_salary
+    PAYROLL_USER_CREATED_QUEUE_URL:
+      Ref: PayrollUserCreatedQueue
+    LOCALSTACK_URL: ${self:custom.localstackUrl.${opt:stage, 'dev'}, ''}
+    PYTHONPATH: /var/task/dependencies
+
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - dynamodb:UpdateItem
+          Resource:
+            - !GetAtt UsersTable.Arn
+        - Effect: Allow
+          Action:
+            - events:PutEvents
+          Resource:
+            - !GetAtt UserEventsBus.Arn
+        - Effect: Allow
+          Action:
+            - sqs:ReceiveMessage
+            - sqs:DeleteMessage
+            - sqs:GetQueueAttributes
+          Resource:
+            - !GetAtt UserEventsQueue.Arn
+            - !GetAtt PayrollUserCreatedQueue.Arn
+        - Effect: Allow
+          Action:
+            - dynamodb:PutItem
+            - dynamodb:GetItem
+            - dynamodb:UpdateItem
+            - dynamodb:DeleteItem
+            - dynamodb:Query
+          Resource:
+            - !GetAtt PayrollTable.Arn
+            - !Sub "${PayrollTable.Arn}/index/userId-index"
+
+package:                                        
+  patterns:
+    - "!node_modules/**"
+    - "!.venv/**"
+    - "!__pycache__/**"
+    - "!*.pyc"
+    - "!.build/**"
+    - "users/**"
+    - "payroll/**"
+    - "lambdas/**"
+    - "dependencies/**"
+
+functions:
+  api:
+    handler: users.main.handler
+    events:
+      - http:
+          path: /
+          method: any
+          cors: true
+      - http:
+          path: /{proxy+}
+          method: any
+          cors: true
+  processUserUpdate:
+    handler: lambdas.process_user.handler.lambda_handler
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - UserEventsQueue
+              - Arn
+          batchSize: 5
+  updateUser:                         
+    handler: lambdas.update_user.handler.lambda_handler
+    events:
+      - http:
+          path: /user/{id}
+          method: put
+          cors: true
+  createPayrollOnUserCreated:
+    handler: lambdas.create_payroll_for_user.handler.lambda_handler
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - PayrollUserCreatedQueue
+              - Arn
+          batchSize: 5
+  payrollApi:
+    handler: payroll.main.handler
+    events:
+      - http:
+          path: /api/v1/payroll
+          method: any
+          cors: true
+      - http:
+          path: /api/v1/payroll/{proxy+}
+          method: any
+          cors: true
+
+resources:
+  Resources:
+    UserEventsBus:
+      Type: AWS::Events::EventBus
+      Properties:
+        Name: user-events-bus
+
+    UserEventsQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: UserEventsQueue
+
+    UserUpdatedEventRule:
+      Type: AWS::Events::Rule
+      Properties:
+        Name: UserUpdatedToSQS
+        EventBusName:
+          Ref: UserEventsBus
+        EventPattern:
+          source:
+            - user.service
+          detail-type:
+            - UserUpdated
+        Targets:
+          - Arn:
+              Fn::GetAtt:
+                - UserEventsQueue
+                - Arn
+            Id: "UserEventsQueueTarget"
+
+    UsersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: users_events
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: userId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
+
+    UserEventsQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - !Ref UserEventsQueue
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: events.amazonaws.com
+              Action: sqs:SendMessage
+              Resource: !GetAtt UserEventsQueue.Arn
+              Condition:
+                ArnEquals:
+                  aws:SourceArn: !GetAtt UserUpdatedEventRule.Arn
+
+    PayrollUserCreatedQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: PayrollUserCreatedQueue
+
+    UserCreatedEventRule:
+      Type: AWS::Events::Rule
+      Properties:
+        Name: UserCreatedToPayrollSQS
+        EventBusName:
+          Ref: UserEventsBus
+        EventPattern:
+          source:
+            - user.service
+          detail-type:
+            - UserCreated
+        Targets:
+          - Arn:
+              Fn::GetAtt:
+                - PayrollUserCreatedQueue
+                - Arn
+            Id: "PayrollUserCreatedQueueTarget"
+
+    PayrollUserCreatedQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - !Ref PayrollUserCreatedQueue
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: events.amazonaws.com
+              Action: sqs:SendMessage
+              Resource: !GetAtt PayrollUserCreatedQueue.Arn
+              Condition:
+                ArnEquals:
+                  aws:SourceArn: !GetAtt UserCreatedEventRule.Arn
+
+    PayrollTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: payroll_salary
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: payrollId
+            AttributeType: S
+          - AttributeName: userId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: payrollId
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: userId-index
+            KeySchema:
+              - AttributeName: userId
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
