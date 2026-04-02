@@ -7,14 +7,14 @@ from users.services.user_service import UserService
 router = APIRouter(tags=["users"])
 
 
-@router.get("/users")
+@router.get("/users/")
 async def list_users(
     service: UserService = Depends(get_user_service),
 ):
     return service.list_users()
 
 
-@router.post("/users", status_code=201)
+@router.post("/users/", status_code=201)
 async def create_user(
     body: UserCreateRequest,
     service: UserService = Depends(get_user_service),
@@ -40,14 +40,18 @@ async def update_user(
     body: UserUpdateRequest,
     service: UserService = Depends(get_user_service),
 ):
+    if not service.get_user(user_id):
+        raise HTTPException(status_code=404, detail="User not found")
     service.update_user(user_id, body.model_dump())
     return {"message": "Event sent"}
 
 
-@router.delete("/users/{user_id}")
+@router.delete("/users/{user_id}", status_code=200)
 async def delete_user(
     user_id: str,
     service: UserService = Depends(get_user_service),
 ):
+    if not service.get_user(user_id):
+        raise HTTPException(status_code=404, detail="User not found")
     service.delete_user(user_id)
     return {"message": "User deleted"}

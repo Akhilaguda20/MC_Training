@@ -23,5 +23,11 @@ app.add_middleware(
 app.add_middleware(MetricsMiddleware)
 app.include_router(user_router)
 
+
+@app.get("/health")
+def health() -> dict:
+    return {"status": "ok"}
+
+
 # Mangum wraps the ASGI app so AWS Lambda / API Gateway can invoke it
 handler = Mangum(app, lifespan="off")

@@ -7,14 +7,14 @@ from payroll.services.payroll_service import PayrollService
 router = APIRouter(tags=["payroll"])
 
 
-@router.get("/payroll")
+@router.get("/payroll/")
 async def list_all_payrolls(
     service: PayrollService = Depends(get_payroll_service),
 ):
     return service.list_all_payrolls()
 
 
-@router.post("/payroll", status_code=201)
+@router.post("/payroll/", status_code=201)
 async def create_payroll(
     body: PayrollCreateRequest,
     service: PayrollService = Depends(get_payroll_service),

@@ -31,6 +31,7 @@ class DynamoDBUserRepository:
                 "status":    {"S": "CREATED"},
                 "createdAt": {"S": datetime.utcnow().isoformat()},
             },
+            ConditionExpression="attribute_not_exists(userId)",
         )
         logger.info("DynamoDB put_item succeeded table=%s user_id=%s", self._table, user_id)
 
@@ -49,8 +50,17 @@ class DynamoDBUserRepository:
 
     def list_all(self) -> list[dict]:
         logger.debug("DynamoDB scan table=%s", self._table)
-        response = self._client.scan(TableName=self._table)
-        items = [{k: list(v.values())[0] for k, v in item.items()} for item in response.get("Items", [])]
+        items = []
+        kwargs: dict = {"TableName": self._table}
+        while True:
+            response = self._client.scan(**kwargs)
+            items.extend(
+                [{k: list(v.values())[0] for k, v in item.items()} for item in response.get("Items", [])]
+            )
+            last_key = response.get("LastEvaluatedKey")
+            if not last_key:
+                break
+            kwargs["ExclusiveStartKey"] = last_key
         logger.info("DynamoDB scan returned %d items table=%s", len(items), self._table)
         return items
 

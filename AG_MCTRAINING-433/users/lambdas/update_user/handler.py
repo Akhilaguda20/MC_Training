@@ -15,6 +15,14 @@ from users.publishers.eventbridge import EventBridgePublisher
 from users.utils.response import build_response
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+
+def _log(level: str, event: str, **kwargs) -> None:
+    logger.log(
+        getattr(logging, level),
+        json.dumps({"event": event, **kwargs}),
+    )
 
 
 def lambda_handler(event: dict, context) -> dict:
@@ -35,8 +43,9 @@ def lambda_handler(event: dict, context) -> dict:
             event_bus_name=settings.EVENT_BUS_NAME,
         )
         publisher.publish("UserUpdated", {"userId": user_id, "data": body})
-    except Exception:
-        logger.exception("Failed to publish UserUpdated event for user_id=%s", user_id)
+        _log("INFO", "user_updated_event_published", user_id=user_id)
+    except Exception as exc:
+        _log("ERROR", "publish_failed", user_id=user_id, error=str(exc))
         return build_response(500, {"message": "Internal server error"})
 
     return build_response(200, {"message": "Event sent"})

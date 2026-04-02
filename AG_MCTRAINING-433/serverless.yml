@@ -13,6 +13,14 @@ custom:
   localstackUrl:
     local: http://host.docker.internal:4566
     dev: ""
+  resourceNames:
+    userEventsBus: user-events-bus
+    usersTable: users_events
+    payrollTable: payroll_salary
+    userEventsQueue: UserEventsQueue
+    userEventsDLQ: UserEventsDLQ
+    payrollUserCreatedQueue: PayrollUserCreatedQueue
+    payrollUserCreatedDLQ: PayrollUserCreatedDLQ
 
 provider:
   name: aws
@@ -28,6 +36,9 @@ provider:
   apiGateway:
     description: API Gateway for User and Payroll CRUD operations
     metrics: true  # enables detailed CloudWatch metrics per resource/method in AWS/ApiGateway namespace
+    throttle:
+      burstLimit: 200   # max concurrent requests
+      rateLimit: 100    # sustained requests per second
 
   logs:
     restApi:
@@ -50,6 +61,8 @@ package:
 functions:
   payrollApi:
     handler: payroll.main.handler
+    memorySize: 256
+    timeout: 15
     package:
       patterns:
         - '!**'
@@ -78,6 +91,8 @@ functions:
           cors: true
   api:
     handler: users.main.handler
+    memorySize: 256
+    timeout: 15
     package:
       patterns:
         - '!**'
@@ -110,6 +125,8 @@ functions:
           cors: true
   processUserUpdate:
     handler: users.lambdas.process_user.handler.lambda_handler
+    memorySize: 128
+    timeout: 30
     package:
       patterns:
         - '!**'
@@ -137,6 +154,8 @@ functions:
           batchSize: 5
   updateUser:
     handler: users.lambdas.update_user.handler.lambda_handler
+    memorySize: 128
+    timeout: 10
     package:
       patterns:
         - '!**'
@@ -155,6 +174,8 @@ functions:
           cors: true
   createPayrollOnUserCreated:
     handler: payroll.lambdas.create_payroll_for_user.handler.lambda_handler
+    memorySize: 256
+    timeout: 30
     package:
       patterns:
         - '!**'
@@ -186,7 +207,7 @@ resources:
     UserEventsBus:
       Type: AWS::Events::EventBus
       Properties:
-        Name: user-events-bus
+        Name: ${self:custom.resourceNames.userEventsBus}
 
     UserEventBusLogGroup:
       Type: AWS::Logs::LogGroup
@@ -225,11 +246,20 @@ resources:
           - Arn: !GetAtt UserEventBusLogGroup.Arn
             Id: "UserEventBusLogTarget"
 
+    UserEventsDLQ:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:custom.resourceNames.userEventsDLQ}
+        MessageRetentionPeriod: 1209600  # 14 days
+
     UserEventsQueue:
       Type: AWS::SQS::Queue
       Properties:
-        QueueName: UserEventsQueue
+        QueueName: ${self:custom.resourceNames.userEventsQueue}
         VisibilityTimeout: 30
+        RedrivePolicy:
+          deadLetterTargetArn: !GetAtt UserEventsDLQ.Arn
+          maxReceiveCount: 3
 
     UserUpdatedEventRule:
       Type: AWS::Events::Rule
@@ -251,8 +281,9 @@ resources:
 
     UsersTable:
       Type: AWS::DynamoDB::Table
+      DeletionPolicy: Retain
       Properties:
-        TableName: users_events
+        TableName: ${self:custom.resourceNames.usersTable}
         BillingMode: PAY_PER_REQUEST
         AttributeDefinitions:
           - AttributeName: userId
@@ -278,11 +309,20 @@ resources:
                 ArnEquals:
                   aws:SourceArn: !GetAtt UserUpdatedEventRule.Arn
 
+    PayrollUserCreatedDLQ:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:custom.resourceNames.payrollUserCreatedDLQ}
+        MessageRetentionPeriod: 1209600  # 14 days
+
     PayrollUserCreatedQueue:
       Type: AWS::SQS::Queue
       Properties:
-        QueueName: PayrollUserCreatedQueue
+        QueueName: ${self:custom.resourceNames.payrollUserCreatedQueue}
         VisibilityTimeout: 30
+        RedrivePolicy:
+          deadLetterTargetArn: !GetAtt PayrollUserCreatedDLQ.Arn
+          maxReceiveCount: 3
 
     UserCreatedEventRule:
       Type: AWS::Events::Rule
@@ -319,10 +359,45 @@ resources:
                 ArnEquals:
                   aws:SourceArn: !GetAtt UserCreatedEventRule.Arn
 
+    UserEventsDLQDepthAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:service}-${self:provider.stage}-user-events-dlq-depth
+        AlarmDescription: "Messages are landing in UserEventsDLQ — processing failures need investigation"
+        Namespace: AWS/SQS
+        MetricName: ApproximateNumberOfMessagesVisible
+        Dimensions:
+          - Name: QueueName
+            Value: !GetAtt UserEventsDLQ.QueueName
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+
+    PayrollUserCreatedDLQDepthAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:service}-${self:provider.stage}-payroll-user-created-dlq-depth
+        AlarmDescription: "Messages are landing in PayrollUserCreatedDLQ — processing failures need investigation"
+        Namespace: AWS/SQS
+        MetricName: ApproximateNumberOfMessagesVisible
+        Dimensions:
+          - Name: QueueName
+            Value: !GetAtt PayrollUserCreatedDLQ.QueueName
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+
     PayrollTable:
       Type: AWS::DynamoDB::Table
+      DeletionPolicy: Retain
       Properties:
-        TableName: payroll_salary
+        TableName: ${self:custom.resourceNames.payrollTable}
         BillingMode: PAY_PER_REQUEST
         AttributeDefinitions:
           - AttributeName: payrollId
