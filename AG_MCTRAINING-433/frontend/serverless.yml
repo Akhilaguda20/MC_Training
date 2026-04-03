@@ -1,0 +1,75 @@
+service: mc-training-frontend
+
+plugins:
+  - serverless-s3-sync
+
+custom:
+  bucketName: ${self:service}-${self:provider.stage}
+  s3Sync:
+    - bucketName: ${self:custom.bucketName}
+      localDir: dist
+      deleteRemoved: true       # removes files from S3 that no longer exist locally
+      params:
+        # Hashed assets (JS/CSS/fonts/images) are content-addressed — cache forever
+        - "**/*.js":
+            CacheControl: "public,max-age=31536000,immutable"
+        - "**/*.css":
+            CacheControl: "public,max-age=31536000,immutable"
+        - "**/*.woff2":
+            CacheControl: "public,max-age=31536000,immutable"
+        - "**/*.png":
+            CacheControl: "public,max-age=31536000,immutable"
+        - "**/*.svg":
+            CacheControl: "public,max-age=31536000,immutable"
+        # index.html is the React Router entry point — must never be cached
+        - "index.html":
+            CacheControl: "no-cache,no-store,must-revalidate"
+            ContentType: "text/html"
+
+provider:
+  name: aws
+  region: us-east-1
+  stage: ${opt:stage, 'dev'}
+
+# No Lambda functions — this stack only manages static hosting infrastructure
+
+resources:
+  Resources:
+
+    # ── S3 bucket ─────────────────────────────────────────────────────────────
+    FrontendBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.bucketName}
+        # Allow the bucket policy below to grant public read access
+        PublicAccessBlockConfiguration:
+          BlockPublicAcls: false
+          IgnorePublicAcls: false
+          BlockPublicPolicy: false
+          RestrictPublicBuckets: false
+        # Enable static website hosting; error document = index.html so that
+        # React Router client-side routes return the app shell instead of 403
+        WebsiteConfiguration:
+          IndexDocument: index.html
+          ErrorDocument: index.html
+
+    # ── Bucket policy — public read ───────────────────────────────────────────
+    FrontendBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket: !Ref FrontendBucket
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal: "*"
+              Action: s3:GetObject
+              Resource: !Sub "arn:aws:s3:::${self:custom.bucketName}/*"
+
+  Outputs:
+    WebsiteURL:
+      Value: !GetAtt FrontendBucket.WebsiteURL
+      Description: Public URL of the deployed frontend
+    BucketName:
+      Value: !Ref FrontendBucket
+      Description: S3 bucket name
